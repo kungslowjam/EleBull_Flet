@@ -1,72 +1,101 @@
-    import flet as ft
-    from ultralytics import YOLO
-    import cv2
-    import numpy as np
-    import base64
-    import threading
+import flet as ft
+import base64
+import cv2
+import threading
+import time
+import io
+from ultralytics import YOLO
+from PIL import Image
+import numpy as np
+import torch
 
-    # Initialize YOLO model
-    model = YOLO('yolov8n.pt')  # Use yolov8n.pt for a lightweight version
+# Load YOLOv8 model
+model = YOLO("yolov8n.pt")  # Replace with your YOLOv8 model path
 
-    def main(page: ft.Page):
-        page.title = "YOLOv8 Object Detection App"
-        page.vertical_alignment = ft.MainAxisAlignment.CENTER
+# Capture video from the specified path or webcam
+cap = cv2.VideoCapture(0)  # Use "0" for webcam, or replace with video path
+
+class Countdown(ft.UserControl):
+    def __init__(self):
+        super().__init__()
+        self.running = False  # Control flag for the thread, initially set to False
+        self.img = ft.Image(border_radius=ft.border_radius.all(20))
+
+    def start_video_feed(self, e):
+        # Start video feed thread
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self.update_timer)
+            self.thread.start()
+
+    def will_unmount(self):
+        # Stop the thread and release the video capture when unmounting
+        self.running = False
+        if hasattr(self, "thread"):
+            self.thread.join()
+        cap.release()
+
+    def update_timer(self):
+        while self.running:
+            success, frame = cap.read()
+            if not success:
+                break
+            
+            # Reduce frame resolution for faster processing
+            frame = cv2.resize(frame, (320, 240))  # Resize to smaller resolution
+
+            # Run YOLOv8 detection on the frame
+            with torch.no_grad():  # Disable gradients for faster inference
+                results = model.predict(frame, imgsz=320)  # Lower imgsz for faster processing
+                annotated_frame = results[0].plot()  # Get annotated frame as numpy array
+
+            # Convert annotated frame to RGB for Flet compatibility
+            annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(annotated_frame_rgb)
+
+            # Encode the PIL image as a PNG for Flet
+            img_byte_arr = io.BytesIO()
+            pil_image.save(img_byte_arr, format='PNG')
+            im_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+
+            # Update the image in the Flet app
+            self.img.src_base64 = im_b64
+            self.update()
+
+            # Small delay for frame rate control
+            time.sleep(0.05)  # Adjust this value to control the frame rate
+
+    def build(self):
+        # Define start button here
+        start_button = ft.ElevatedButton(text="Start", on_click=self.start_video_feed)
         
-        # Image viewer with an initial placeholder
-        img_viewer = ft.Image(src_base64="", width=640, height=480)
+        # Return a Column layout containing the button and image
+        return ft.Column([start_button, self.img])
 
-        # Start detection function in a new thread
-        def start_detection(e):
-            def video_loop():
-                # Open video capture for the webcam (or replace with a video file path)
-                cap = cv2.VideoCapture(0)
-                
-                while cap.isOpened():
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    
-                    # Run YOLOv8 detection
-                    results = model(frame)
-                    
-                    # Draw bounding boxes
-                    for result in results:
-                        for box in result.boxes:
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])  # Coordinates
-                            confidence = box.conf[0]
-                            label = result.names[int(box.cls[0])]  # Class name
-                            
-                            # Draw box and label on the frame
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            cv2.putText(frame, f'{label} {confidence:.2f}', (x1, y1 - 10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+def main(page: ft.Page):
+    page.padding = 50
+    page.window_left = page.window_left + 100
+    page.theme_mode = ft.ThemeMode.DARK
 
-                    # Encode frame to JPEG format
-                    _, img_buf = cv2.imencode('.jpg', frame)
-                    
-                    # Convert to base64 and decode it to UTF-8
-                    img_base64 = base64.b64encode(img_buf).decode('utf-8').replace('\n', '')
+    # Layout with only the video feed and title text
+    section = ft.Container(
+        margin=ft.margin.only(bottom=40),
+        content=ft.Column([
+            ft.Text(
+                "OPENCV WITH FLET AND YOLOv8",
+                size=20, weight="bold",
+                color=ft.colors.WHITE,
+            ),
+            Countdown()
+        ], alignment=ft.MainAxisAlignment.CENTER),
+        bgcolor=ft.colors.WHITE24,
+        padding=10,
+        border_radius=ft.border_radius.all(20),
+    )
 
-                    # Update the image source with the new base64 data
-                    img_viewer.src_base64 = f'data:image/jpeg;base64,{img_base64}'
+    # Add the section to the page
+    page.add(section)
 
-                    # Refresh the Flet page to display the updated frame
-                    page.update()
-
-                # Release the video capture when done
-                cap.release()
-
-            # Start the video loop in a new thread
-            threading.Thread(target=video_loop, daemon=True).start()
-
-        # Button to start detection
-        start_btn = ft.ElevatedButton("Start Detection", on_click=start_detection)
-
-        # Add elements to the page
-        page.add(
-            ft.Row([img_viewer]),
-            ft.Row([start_btn], alignment=ft.MainAxisAlignment.CENTER),
-        )
-
-    # Run Flet app
+if __name__ == '__main__':
     ft.app(target=main)
+    cv2.destroyAllWindows()
