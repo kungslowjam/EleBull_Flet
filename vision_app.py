@@ -1,4 +1,4 @@
-# vision_app.py
+import os
 import flet as ft
 import base64
 import cv2
@@ -10,43 +10,70 @@ from ultralytics import YOLO
 import pythoncom
 from pygrabber.dshow_graph import FilterGraph
 
-# โหลดโมเดล YOLO
-model = YOLO("yolov8n.engine", task="detect")
+# Constants
+MODEL_DIR = "model"
+FRAME_SIZE = (320, 320)
+FRAME_QUEUE_SIZE = 5
 
-# ฟังก์ชันสำหรับดึงข้อมูลกล้องจาก Windows
+# Function to retrieve camera devices from Windows
 def get_camera_devices():
-    pythoncom.CoInitialize()  # Initialize COM for DirectShow on Windows
+    pythoncom.CoInitialize()
     graph = FilterGraph()
     devices = graph.get_input_devices()
-    return [(device, index) for index, device in enumerate(devices)]
+    return {device: index for index, device in enumerate(devices)}
 
 class Countdown(ft.UserControl):
-    def __init__(self):
+    def __init__(self, update_person_count_callback, reset_person_count_callback):
         super().__init__()
         self.running = False
-        # ใช้ base64-encoded โปร่งใสสำหรับรูปเริ่มต้น
+        self.update_person_count_callback = update_person_count_callback
+        self.reset_person_count_callback = reset_person_count_callback  # Callback for resetting count
         transparent_pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wcAAgAB/Onk7AAA"
-        self.img = ft.Image(border_radius=ft.border_radius.all(20), src_base64=transparent_pixel)  
+        self.img = ft.Image(border_radius=ft.border_radius.all(20), src_base64=transparent_pixel)
         self.cap = None
-        self.selected_camera_index = 0
-        self.frame_queue = queue.Queue(maxsize=5)
+        self.selected_camera_name = None
+        self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
+        self.camera_devices = get_camera_devices()
+        self.model = None
+        self.selected_model_path = None
+        self.status_text = ft.Text("Selected Camera: None, Selected Model: None")
+        self.detection_info = ft.Text("Detections: None", color=ft.colors.WHITE)
+        self.unique_person_ids = set()  # Track unique person IDs
+
+    def load_model(self):
+        if self.selected_model_path:
+            try:
+                self.model = YOLO(self.selected_model_path, task="detect")
+                print(f"Model loaded: {self.selected_model_path}")
+            except Exception as e:
+                print(f"Error loading YOLO model: {e}")
+                self.model = None
+        else:
+            print("No model selected.")
 
     def start_video_feed(self, e):
         if not self.running:
-            self.cap = cv2.VideoCapture(self.selected_camera_index)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            if not self.cap.isOpened():
-                print("Error: Cannot open camera.")
-                return
-            self.running = True
-            threading.Thread(target=self.read_frames).start()
-            threading.Thread(target=self.process_frames).start()
+            if self.selected_camera_name is not None:
+                self.cap = cv2.VideoCapture(self.camera_devices[self.selected_camera_name])
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if not self.cap.isOpened():
+                    print("Error: Cannot open camera.")
+                    return
+                self.running = True
+                self.load_model()
+                threading.Thread(target=self.read_frames, daemon=True).start()
+                threading.Thread(target=self.process_frames, daemon=True).start()
+            else:
+                print("No camera selected.")
 
     def stop_video_feed(self, e):
         self.running = False
         if self.cap:
             self.cap.release()
             self.cap = None
+
+    def reset_person_count(self, e):
+        self.reset_person_count_callback()  # Call the callback to reset person count
 
     def will_unmount(self):
         self.running = False
@@ -59,40 +86,98 @@ class Countdown(ft.UserControl):
             success, frame = self.cap.read()
             if not success:
                 break
-            frame = cv2.resize(frame, (320, 320))
+            frame = cv2.resize(frame, FRAME_SIZE)
             if not self.frame_queue.full():
                 self.frame_queue.put(frame)
             time.sleep(0.01)
 
     def process_frames(self):
+        if self.model is None:
+            print("YOLO model not loaded. Skipping frame processing.")
+            return
+        
         while self.running:
             if not self.frame_queue.empty():
                 frame = self.frame_queue.get()
                 with torch.no_grad():
-                    results = model.predict(frame, imgsz=320)
-                    annotated_frame = results[0].plot()
-                _, buffer = cv2.imencode('.png', annotated_frame)
-                im_b64 = base64.b64encode(buffer).decode("utf-8")
-                self.img.src_base64 = im_b64
-                self.update()
-            time.sleep(0.02)
+                    results = self.model.track(source=frame, imgsz=FRAME_SIZE[0], tracker="botsort.yaml")
+                    
+                    if results:
+                        detections = results[0].names
+                        class_counts = {}
+                        detection_ids = []
+
+                        for box in results[0].boxes:
+                            class_name = detections[int(box.cls)]
+                            track_id_tensor = box.id
+                            
+                            # Convert track_id from tensor to int
+                            if track_id_tensor is not None and isinstance(track_id_tensor, torch.Tensor):
+                                track_id = int(track_id_tensor.item())
+                            else:
+                                track_id = track_id_tensor
+                                
+                            if class_name == "person" and track_id is not None:
+                                if track_id not in self.unique_person_ids:
+                                    self.unique_person_ids.add(track_id)
+                                    self.update_person_count_callback(track_id)
+                            detection_ids.append(f"{class_name} (ID: {track_id})")
+                            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+
+                        detection_summary = "Detections: " + ", ".join([f"{cls}: {count}" for cls, count in class_counts.items()])
+                        detection_summary += "\nTrack IDs: " + ", ".join(detection_ids[:10])
+                        self.detection_info.value = detection_summary
+                        self.update()
+
+                        annotated_frame = results[0].plot() if results else frame
+                    _, buffer = cv2.imencode('.png', annotated_frame)
+                    im_b64 = base64.b64encode(buffer).decode("utf-8")
+                    self.img.src_base64 = im_b64
+                    self.update()
+                time.sleep(0.02)
+
 
     def on_camera_change(self, e):
-        self.selected_camera_index = int(e.control.value)
+        self.selected_camera_name = e.control.value
+        self.status_text.value = f"Selected Camera: {self.selected_camera_name}"
+        self.update()
+
+    def on_model_change(self, e):
+        self.selected_model_path = os.path.join(MODEL_DIR, e.control.value)
+        self.status_text.value = f"Selected Model: {os.path.basename(self.selected_model_path)}"
+        self.update()
 
     def build(self):
-        camera_devices = get_camera_devices()
         camera_selector = ft.Dropdown(
-            options=[ft.dropdown.Option(str(index), text=name) for name, index in camera_devices],
+            options=[ft.dropdown.Option(name, text=name) for name in self.camera_devices.keys()] or [ft.dropdown.Option("No cameras available")],
             label="Select Camera",
             on_change=self.on_camera_change,
             width=200
         )
-        button_row = ft.Row(
-            controls=[
-                ft.ElevatedButton(text="Start", on_click=self.start_video_feed),
-                ft.ElevatedButton(text="Stop", on_click=self.stop_video_feed)
-            ],
-            alignment=ft.MainAxisAlignment.START
+
+        model_files = [f for f in os.listdir(MODEL_DIR) if f.endswith((".engine", ".pt"))]
+        
+        model_selector = ft.Dropdown(
+            options=[ft.dropdown.Option(file, text=file) for file in model_files] or [ft.dropdown.Option("No models available")],
+            label="Select Model",
+            on_change=self.on_model_change,
+            width=200
         )
-        return ft.Column([camera_selector, button_row, self.img])
+        
+        # Buttons for starting/stopping video feed and resetting person count
+        button_row = ft.Row( 
+            controls=[ 
+                ft.ElevatedButton(text="Start", on_click=self.start_video_feed), 
+                ft.ElevatedButton(text="Stop", on_click=self.stop_video_feed),
+            ], 
+            alignment=ft.MainAxisAlignment.START 
+        ) 
+        
+        return ft.Column([
+            camera_selector,
+            model_selector,
+            self.status_text,
+            self.detection_info,
+            button_row,
+            self.img
+        ])
