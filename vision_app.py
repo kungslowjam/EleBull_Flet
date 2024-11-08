@@ -26,20 +26,21 @@ class Countdown(ft.UserControl):
     def __init__(self, update_person_count_callback, reset_person_count_callback, default_camera=None, default_model=None):
         super().__init__()
         self.running = False
+        self.automatic_start = False  # New attribute for automatic start
         self.update_person_count_callback = update_person_count_callback
         self.reset_person_count_callback = reset_person_count_callback
-        self.selected_camera_name = default_camera  # Set the default camera at initialization
-        self.selected_model_path = os.path.join(MODEL_DIR, default_model) if default_model else None  # Set the default model at initialization
+        self.selected_camera_name = default_camera
+        self.selected_model_path = os.path.join(MODEL_DIR, default_model) if default_model else None
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
         self.camera_devices = get_camera_devices()
         self.model = None
         self.status_text = ft.Text(f"Selected Camera: {default_camera if default_camera else 'None'}, Selected Model: {default_model if default_model else 'None'}")
         self.detection_info = ft.Text("Detections: None", color=ft.colors.WHITE)
-        self.unique_person_ids = set()  # Track unique person IDs
+        self.unique_person_ids = set()
         
         # Placeholder transparent image in base64 format (1x1 pixel)
         transparent_pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wcAAgAB/Onk7AAA"
-        self.img = ft.Image(border_radius=ft.border_radius.all(20), src_base64=transparent_pixel)  # Initialize with placeholder
+        self.img = ft.Image(border_radius=ft.border_radius.all(20), src_base64=transparent_pixel)
 
         # Load model if default model is set
         self.load_model()
@@ -49,6 +50,8 @@ class Countdown(ft.UserControl):
             try:
                 self.model = YOLO(self.selected_model_path, task="detect")
                 print(f"Model loaded: {self.selected_model_path}")
+                if self.automatic_start:  # Check if automatic start is enabled
+                    self.start_video_feed(None)  # Automatically start video feed
             except Exception as e:
                 print(f"Error loading YOLO model: {e}")
                 self.model = None
@@ -80,7 +83,7 @@ class Countdown(ft.UserControl):
             self.cap = None
 
     def reset_person_count(self, e):
-        self.reset_person_count_callback()  # Call the callback to reset person count
+        self.reset_person_count_callback()
 
     def will_unmount(self):
         self.running = False
@@ -145,19 +148,25 @@ class Countdown(ft.UserControl):
     def on_camera_change(self, e):
         self.selected_camera_name = e.control.value
         self.status_text.value = f"Selected Camera: {self.selected_camera_name}"
+        if self.automatic_start:  # Automatically start video if enabled
+            self.start_video_feed(None)
         self.update()
 
     def on_model_change(self, e):
         self.selected_model_path = os.path.join(MODEL_DIR, e.control.value)
         self.status_text.value = f"Selected Model: {os.path.basename(self.selected_model_path)}"
-        self.load_model()  # Load the newly selected model
+        self.load_model()
         self.update()
+
+    def toggle_automatic_start(self, e):
+        self.automatic_start = e.control.value
+        print(f"Automatic Start set to: {self.automatic_start}")
 
     def build(self):
         camera_selector = ft.Dropdown(
             options=[ft.dropdown.Option(name, text=name) for name in self.camera_devices.keys()] or [ft.dropdown.Option("No cameras available")],
             label="Select Camera",
-            value=self.selected_camera_name,  # Set initial value to the default camera
+            value=self.selected_camera_name,
             on_change=self.on_camera_change,
             width=200
         )
@@ -167,7 +176,7 @@ class Countdown(ft.UserControl):
         model_selector = ft.Dropdown(
             options=[ft.dropdown.Option(file, text=file) for file in model_files] or [ft.dropdown.Option("No models available")],
             label="Select Model",
-            value=os.path.basename(self.selected_model_path) if self.selected_model_path else None,  # Set initial value to the default model
+            value=os.path.basename(self.selected_model_path) if self.selected_model_path else None,
             on_change=self.on_model_change,
             width=200
         )
@@ -179,6 +188,8 @@ class Countdown(ft.UserControl):
             ],
             alignment=ft.MainAxisAlignment.START
         )
+
+        
         
         return ft.Column([
             camera_selector,

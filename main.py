@@ -3,6 +3,7 @@ from vision_app import Countdown
 from setting import SettingsScreen
 import json
 import os
+import asyncio
 import time
 
 # Paths to icon files
@@ -20,14 +21,14 @@ def get_base64_icon(path):
 icon_bull_base64 = get_base64_icon(icon_bull)
 icon_auto_base64 = get_base64_icon(icon_auto)
 
-# Load the default camera and model settings from a file
+# Load the default camera, model settings, and automatic start state from a file
 def load_settings():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"cameras": [None, None, None], "models": [None, None, None]}  # Default if no settings are saved
+    return {"cameras": [None, None, None], "models": [None, None, None], "automatic_start": False}
 
-# Save the default camera and model settings to a file
+# Save the default camera, model settings, and automatic start state to a file
 def save_settings(settings):
     with open(STATE_FILE, "w") as f:
         json.dump(settings, f)
@@ -36,6 +37,7 @@ def save_settings(settings):
 settings = load_settings()
 section_default_cameras = settings["cameras"]
 section_default_models = settings["models"]
+automatic_start_enabled = settings.get("automatic_start", False)  # Load automatic start state
 
 # Global variables for tracking unique persons
 total_person_count = 0
@@ -74,11 +76,14 @@ def reset_total_person_count(e):
 # Callbacks to set default camera and model for each section and save the settings
 def set_section_camera(section_index, camera_name):
     section_default_cameras[section_index] = camera_name
-    save_settings({"cameras": section_default_cameras, "models": section_default_models})
+    save_settings({"cameras": section_default_cameras, "models": section_default_models, "automatic_start": automatic_start_enabled})
 
 def set_section_model(section_index, model_name):
     section_default_models[section_index] = model_name
-    save_settings({"cameras": section_default_cameras, "models": section_default_models})
+    save_settings({"cameras": section_default_cameras, "models": section_default_models, "automatic_start": automatic_start_enabled})
+
+# Initialize Countdown sections list for managing the video feed start/stop
+countdown_sections = []
 
 def create_countdown_section(title, default_camera=None, default_model=None):
     try:
@@ -88,6 +93,8 @@ def create_countdown_section(title, default_camera=None, default_model=None):
             default_camera=default_camera,
             default_model=default_model
         )
+        countdown_component.automatic_start = automatic_start_enabled  # Set initial automatic start state
+        countdown_sections.append(countdown_component)  # Add to list for control
 
         return ft.Container(
             width=350,
@@ -110,7 +117,16 @@ def create_countdown_section(title, default_camera=None, default_model=None):
         print(f"Error creating countdown section for {title}: {e}")
         return ft.Text("Error loading countdown")
 
-def main(page: ft.Page):
+async def start_with_delay():
+    # Wait for 5 seconds before starting the camera feed
+    await asyncio.sleep(5)
+    if automatic_start_enabled:
+        # Start camera feed for all sections
+        for countdown in countdown_sections:
+            countdown.start_video_feed(None)
+        print("Automatic Start enabled - Camera feed started for all sections")
+
+async def app(page: ft.Page):
     page.padding = 50
     page.theme_mode = ft.ThemeMode.DARK
 
@@ -163,13 +179,30 @@ def main(page: ft.Page):
         vertical_alignment=ft.CrossAxisAlignment.CENTER
     )
 
+    def toggle_automatic_start(e):
+        global automatic_start_enabled
+        automatic_start_enabled = e.control.value
+        save_settings({"cameras": section_default_cameras, "models": section_default_models, "automatic_start": automatic_start_enabled})
+        
+        if automatic_start_enabled:
+            # Start camera feed for all sections
+            for countdown in countdown_sections:
+                countdown.start_video_feed(None)
+            print("Automatic Start enabled - Camera feed started for all sections")
+        else:
+            # Stop camera feed for all sections
+            for countdown in countdown_sections:
+                countdown.stop_video_feed(None)
+            print("Automatic Start disabled - Camera feed stopped for all sections")
+
+    # Automatic Start Checkbox with toggle functionality
     automatic_start_checkbox = ft.Row(
         controls=[
             ft.Image(src=icon_auto_base64, width=48, height=48, fit=ft.ImageFit.CONTAIN),
             ft.Checkbox(
                 label="Automatic Start",
-                value=False,
-                on_change=lambda e: print(f"Automatic Start is {'enabled' if e.control.value else 'disabled'}")
+                value=automatic_start_enabled,  # Set initial state based on loaded settings
+                on_change=toggle_automatic_start
             )
         ],
         alignment=ft.MainAxisAlignment.CENTER
@@ -193,7 +226,6 @@ def main(page: ft.Page):
             ft.ListTile(title=ft.Text("IP_CAMERA"), on_click=lambda e: print("About selected")),
             ft.ListTile(title=ft.Text("Settings"), on_click=show_settings),
             ft.ListTile(title=ft.Text("About"), on_click=lambda e: print("About selected")),
-
         ]
     )
 
@@ -205,6 +237,10 @@ def main(page: ft.Page):
     page.appbar = ft.AppBar(title=ft.Text("EleBull_VISION"), leading=menu_button)
 
     page.add(main_layout)
+    page.update()  # Ensure the page is fully updated
+
+    # Run the start_with_delay coroutine to check and start camera feeds after delay
+    await start_with_delay()
 
 if __name__ == '__main__':
-    ft.app(target=main)
+    ft.app(target=app)
