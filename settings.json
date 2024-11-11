@@ -1,1 +1,1 @@
-{"cameras": ["Logitech Webcam C930e", "HP Wide Vision HD Camera", null], "models": ["yolov8n.engine", "yolo11n.pt", null], "automatic_start": true}
+{"cameras": ["HP Wide Vision HD Camera", "HP Wide Vision HD Camera", null], "models": ["yolov8n.engine", "yolo11n.pt", null], "thresholds": [0.54, 0.59, 0.5], "automatic_start": false}
