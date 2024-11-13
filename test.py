@@ -1,32 +1,40 @@
 import flet as ft
 
 def main(page: ft.Page):
-    page.title = "Images Example"
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.padding = 50
-    page.update()
+    page.title = "Calculator"
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    img = ft.Image(
-        src=f"/icons/icon-512.png",
-        width=100,
-        height=100,
-        fit=ft.ImageFit.CONTAIN,
-    )
-    images = ft.Row(expand=1, wrap=False, scroll="always")
+    result = ft.Text(value="0", size=40, weight=ft.FontWeight.BOLD)
 
-    page.add(img, images)
+    def button_click(e):
+        if e.control.text == "=":
+            try:
+                result.value = str(eval(result.value))
+            except Exception as ex:
+                result.value = "Error"
+        elif e.control.text == "C":
+            result.value = "0"
+        else:
+            if result.value == "0":
+                result.value = ""
+            result.value += e.control.text
+        page.update()
 
-    for i in range(0, 30):
-        images.controls.append(
-            ft.Image(
-                src=f"https://picsum.photos/200/200?{i}",
-                width=200,
-                height=200,
-                fit=ft.ImageFit.NONE,
-                repeat=ft.ImageRepeat.NO_REPEAT,
-                border_radius=ft.border_radius.all(10),
-            )
-        )
-    page.update()
+    buttons = [
+        ["7", "8", "9", "/"],
+        ["4", "5", "6", "*"],
+        ["1", "2", "3", "-"],
+        ["C", "0", "=", "+"]
+    ]
 
-ft.app(main)
+    for row in buttons:
+        row_container = ft.Row()
+        for button_text in row:
+            button = ft.ElevatedButton(text=button_text, on_click=button_click)
+            row_container.controls.append(button)
+        page.add(row_container)
+
+    page.add(result)
+
+ft.app(target=main)
