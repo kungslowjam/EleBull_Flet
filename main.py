@@ -6,23 +6,25 @@ import os
 import time
 import asyncio
 
-# Paths to icon files
-icon_bull = r".\icon\bull.png"
-icon_auto = r".\icon\automation.png"
-icon_elephant = r".\icon\elephant.png"
+# Paths to icon files (ใช้ os.path.join เพื่อให้เข้ากันได้กับทุกระบบปฏิบัติการ)
+icon_bull = os.path.join("icon", "bull.png")
+icon_auto = os.path.join("icon", "automation.png")
+icon_elephant = os.path.join("icon", "elephant.png")
 
 STATE_FILE = "settings.json"
 
 # Function to convert image to base64
 def get_base64_icon(path):
     import base64
-    try:
-        with open(path, "rb") as image_file:
-            base64_str = base64.b64encode(image_file.read()).decode("utf-8")
-        return f"data:image/png;base64,{base64_str}"
-    except FileNotFoundError:
+    if not os.path.exists(path):
         print(f"Icon file not found: {path}")
-        return ""
+        # ใช้ไอคอนโปร่งใสเริ่มต้น
+        transparent_pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wcAAgAB/Onk7AAA"
+        return f"data:image/png;base64,{transparent_pixel}"
+    
+    with open(path, "rb") as image_file:
+        base64_str = base64.b64encode(image_file.read()).decode("utf-8")
+    return f"data:image/png;base64,{base64_str}"
 
 icon_bull_base64 = get_base64_icon(icon_bull)
 icon_auto_base64 = get_base64_icon(icon_auto)
@@ -151,6 +153,7 @@ async def app(page: ft.Page):
     page.padding = 50
     page.theme_mode = ft.ThemeMode.DARK
 
+    # กำหนดตัวแปร global total_person_count_label เพื่อให้ฟังก์ชันอื่นสามารถเข้าถึงได้
     global total_person_count_label
     total_person_count_label = ft.Text("Total Unique Person Count: 0", size=20, weight="bold", color=ft.colors.WHITE)
 
@@ -292,5 +295,5 @@ async def app(page: ft.Page):
 
     await start_with_delay(page, loading_indicator)
 
-if __name__ == '__main__':
+if __name__ == '__main__': 
     ft.app(target=app)

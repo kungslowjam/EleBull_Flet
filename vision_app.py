@@ -1,29 +1,49 @@
-import os 
-import flet as ft 
-import base64 
-import cv2 
-import threading 
-import time 
-import queue 
-import torch 
-from ultralytics import YOLO  
-import pythoncom  
-from pygrabber.dshow_graph import FilterGraph  
+import sys
+import os
+import flet as ft
+import base64
+import cv2
+import threading
+import time
+import queue
+import torch
+from ultralytics import YOLO
+
+# ตรวจสอบระบบปฏิบัติการ
+if sys.platform == "win32":
+    import pythoncom
+    from pygrabber.dshow_graph import FilterGraph
 
 # Constants
-MODEL_DIR = "model" 
-FRAME_SIZE = (320, 320) 
-FRAME_QUEUE_SIZE = 5 
+MODEL_DIR = "model"
+FRAME_SIZE = (320, 320)
+FRAME_QUEUE_SIZE = 5
 
-# Function to retrieve camera devices from Windows
+# ฟังก์ชันสำหรับดึงข้อมูลกล้อง
 def get_camera_devices():
-    pythoncom.CoInitialize()
-    try:
-        graph = FilterGraph()
-        devices = graph.get_input_devices()
-        return {device: index for index, device in enumerate(devices)}
-    finally:
-        pythoncom.CoUninitialize()
+    if sys.platform == "win32":  # ใช้ pythoncom และ pygrabber สำหรับ Windows
+        pythoncom.CoInitialize()
+        try:
+            graph = FilterGraph()
+            devices = graph.get_input_devices()
+            return {device: index for index, device in enumerate(devices)}
+        finally:
+            pythoncom.CoUninitialize()
+    elif sys.platform == "linux":
+        # ใช้ OpenCV สำหรับ Linux
+        devices = {}
+        index = 0
+        while True:
+            cap = cv2.VideoCapture(index)
+            if not cap.read()[0]:  # ตรวจสอบว่ากล้องที่ index นี้ใช้ได้หรือไม่
+                break
+            devices[f"Camera {index}"] = index
+            cap.release()
+            index += 1
+        return devices
+    else:
+        print("Camera device retrieval is only supported on Windows and Linux.")
+        return {}  # ส่งคืนค่าว่างในกรณีที่ไม่ใช่ Windows หรือ Linux
 
 class Countdown(ft.UserControl): 
     def __init__(self, update_person_count_callback, reset_person_count_callback, default_camera=None, default_model=None, confidence_threshold=0.5): 
@@ -36,7 +56,7 @@ class Countdown(ft.UserControl):
         self.selected_model_path = os.path.join(MODEL_DIR, default_model) if default_model else None
         self.confidence_threshold = confidence_threshold  
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
-        self.camera_devices = get_camera_devices()
+        self.camera_devices = get_camera_devices()  # ดึงข้อมูลกล้องจากฟังก์ชันที่ปรับแล้ว
         self.model = None
         self.status_text = ft.Text(f"Selected Camera: {default_camera if default_camera else 'None'}, Selected Model: {default_model if default_model else 'None'}")
         self.detection_info = ft.Text("Detections: None", color=ft.colors.WHITE)
